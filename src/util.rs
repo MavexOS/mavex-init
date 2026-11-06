@@ -93,3 +93,16 @@ pub fn symlink(target: &str, link: &str) -> std::io::Result<()> {
 pub fn symlink(target: &str, link: &str) -> std::io::Result<()> {
     std::os::unix::fs::symlink(target, link)
 }
+
+pub fn mkdir_p(path: &str) -> std::io::Result<()> {
+    let mut cur = String::new();
+    for part in path.split('/').filter(|p| !p.is_empty()) {
+        cur.push('/');
+        cur.push_str(part);
+        if std::fs::metadata(&cur).is_ok_and(|m| m.is_dir()) {
+            continue;
+        }
+        std::fs::create_dir(&cur)?;
+    }
+    Ok(())
+}

@@ -22,7 +22,7 @@ pub struct Writer {
 
 impl Writer {
     pub fn open() -> Writer {
-        let _ = fs::create_dir_all(DIR);
+        let _ = crate::util::mkdir_p(DIR);
         let file = OpenOptions::new().create(true).append(true).open(FILE).ok();
         let written = fs::metadata(FILE).map(|m| m.len()).unwrap_or(0);
         Writer { file, written }

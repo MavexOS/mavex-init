@@ -9,6 +9,11 @@ mod unit;
 mod util;
 
 fn main() {
+    if let Ok(d) = std::env::var("PWD") {
+        let _ = std::env::set_current_dir(d);
+    } else {
+        let _ = std::env::set_current_dir("/");
+    }
     let mut args: Vec<String> = std::env::args().collect();
     let base = |s: &str| s.rsplit('/').next().unwrap_or(s).to_string();
     let mut name = base(&args[0]);

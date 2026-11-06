@@ -5,11 +5,15 @@ use crate::{journal, util};
 use std::fs;
 
 
+fn pid() -> u32 {
+    fs::read_to_string("/proc/self/stat").ok().and_then(|t| t.split_whitespace().next().and_then(|p| p.parse().ok())).unwrap_or(0)
+}
+
 fn request(op: &str, names: &[String]) -> Result<(), String> {
     if !fs::metadata(format!("{RUN}/pid")).is_ok() {
         return Err("System has not been booted with mavex-init (PID 1 not running).".into());
     }
-    let id = format!("{:x}-{}", util::now_ms(), std::process::id());
+    let id = format!("{:x}-{}", util::now_ms(), pid());
     let _ = fs::write(format!("{RUN}/requests/{id}.tmp"), format!("{op} {}\n", names.join(" ")));
     fs::rename(format!("{RUN}/requests/{id}.tmp"), format!("{RUN}/requests/{id}.req")).map_err(|e| format!("cannot send request: {e}"))?;
     let reply = format!("{RUN}/replies/{id}");
@@ -120,7 +124,7 @@ fn enable(names: &[String], on: bool) -> i32 {
             let dir = format!("/etc/systemd/system/{t}.wants");
             let link = format!("{dir}/{n}");
             if on {
-                let _ = fs::create_dir_all(&dir);
+                let _ = util::mkdir_p(&dir);
                 if fs::symlink_metadata(&link).is_err() && util::symlink(&u.path, &link).is_ok() {
                     println!("Created symlink {link} → {}.", u.path);
                 }

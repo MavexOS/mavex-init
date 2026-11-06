@@ -88,7 +88,9 @@ fn ensure_dirs() {
         "/etc/systemd/system",
         "/usr/lib/systemd/system",
     ] {
-        let _ = fs::create_dir_all(d);
+        if let Err(e) = util::mkdir_p(d) {
+            eprintln!("mavex-init: mkdir {d}: {e}");
+        }
     }
 }
 
@@ -105,7 +107,7 @@ fn install_defaults() {
     }
     let wants = "/etc/systemd/system/multi-user.target.wants";
     if fs::symlink_metadata(wants).is_err() {
-        let _ = fs::create_dir_all(wants);
+        let _ = util::mkdir_p(wants);
         let _ = util::symlink("/usr/lib/systemd/system/mavex-heartbeat.service", &format!("{wants}/mavex-heartbeat.service"));
     }
 }
