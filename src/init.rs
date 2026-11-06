@@ -559,6 +559,7 @@ impl Init {
     pub fn run(&mut self) -> ! {
         let me = util::now_ms();
         let _ = fs::write(format!("{RUN}/pid"), "1\n");
+        let _ = fs::write(format!("{RUN}/version"), format!("{}\n", env!("CARGO_PKG_VERSION")));
         self.ilog(&format!("mavex-init {} starting (systemd-style units, wasm32).", env!("CARGO_PKG_VERSION")));
         let target = default_target();
         self.ilog(&format!("Default target is {target}."));
