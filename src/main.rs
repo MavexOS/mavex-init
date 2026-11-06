@@ -1,0 +1,28 @@
+//! mavex-init: PID 1 + systemctl + journalctl for MavexOS, one multicall binary.
+mod init;
+mod journal;
+mod journalctl;
+mod state;
+mod sys;
+mod systemctl;
+mod unit;
+mod util;
+
+fn main() {
+    let mut args: Vec<String> = std::env::args().collect();
+    let base = |s: &str| s.rsplit('/').next().unwrap_or(s).to_string();
+    let mut name = base(&args[0]);
+    if name == "mavex-init" && args.len() > 1 && ["init", "systemctl", "journalctl"].contains(&args[1].as_str()) {
+        args.remove(0);
+        name = base(&args[0]);
+    }
+    let rest = &args[1..];
+    let code = match name.as_str() {
+        "systemctl" => systemctl::main(rest),
+        "journalctl" => journalctl::main(rest),
+        _ => {
+            init::Init::new().run();
+        }
+    };
+    std::process::exit(code);
+}

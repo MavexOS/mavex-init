@@ -1,0 +1,12 @@
+[Unit]
+Description=MavexOS heartbeat (sample daemon)
+After=basic.target
+
+[Service]
+Type=simple
+ExecStart=/bin/brush -c 'while true; do echo "heartbeat: system is alive"; sleep 30; done'
+Restart=on-failure
+RestartSec=2s
+
+[Install]
+WantedBy=multi-user.target

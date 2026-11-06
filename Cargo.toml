@@ -1,0 +1,18 @@
+[package]
+name = "mavex-init"
+version = "0.1.0"
+edition = "2021"
+description = "PID 1 init for MavexOS with systemd-style units, systemctl and journalctl"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/MavexOS/mavex-init"
+
+[[bin]]
+name = "mavex-init"
+path = "src/main.rs"
+
+[profile.release]
+opt-level = "s"
+lto = true
+panic = "abort"
+codegen-units = 1
+strip = true
