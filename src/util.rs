@@ -106,3 +106,26 @@ pub fn mkdir_p(path: &str) -> std::io::Result<()> {
     }
     Ok(())
 }
+
+/// (uid, gid, home) from /etc/passwd and /etc/group; `group` overrides the primary group when non-empty.
+pub fn lookup_user(user: &str, group: &str) -> Option<(u32, u32, String)> {
+    let pw = std::fs::read_to_string("/etc/passwd").ok()?;
+    let (mut uid, mut gid, mut home) = (None, 0u32, String::new());
+    for l in pw.lines() {
+        let f: Vec<&str> = l.split(':').collect();
+        if f.len() >= 6 && (f[0] == user || f[2] == user) {
+            uid = f[2].parse().ok();
+            gid = f[3].parse().unwrap_or(0);
+            home = f[5].to_string();
+        }
+    }
+    let uid = uid?;
+    if !group.is_empty() {
+        let gr = std::fs::read_to_string("/etc/group").unwrap_or_default();
+        gid = gr.lines().find_map(|l| {
+            let f: Vec<&str> = l.split(':').collect();
+            (f.len() >= 3 && (f[0] == group || f[2] == group)).then(|| f[2].parse().ok()).flatten()
+        })?;
+    }
+    Some((uid, gid, home))
+}

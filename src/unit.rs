@@ -37,11 +37,24 @@ pub struct Unit {
     pub working_dir: String,
     pub env: Vec<String>,
     pub masked: bool,
+    pub user: String,
+    pub group: String,
+    pub trigger: String,
+    pub on_boot_ms: Option<u64>,
+    pub on_active_ms: Option<u64>,
+    pub on_unit_active_ms: Option<u64>,
+    pub calendar: Vec<String>,
 }
 
 impl Unit {
     pub fn is_target(&self) -> bool {
         self.name.ends_with(".target")
+    }
+    pub fn is_timer(&self) -> bool {
+        self.name.ends_with(".timer")
+    }
+    pub fn trigger_unit(&self) -> String {
+        if self.trigger.is_empty() { format!("{}.service", self.name.trim_end_matches(".timer")) } else { self.trigger.clone() }
     }
     pub fn is_service(&self) -> bool {
         self.name.ends_with(".service")
@@ -163,6 +176,13 @@ pub fn parse(name: &str, path: &str, text: &str) -> Unit {
             ("Service", "RestartSec") => u.restart_ms = parse_duration_ms(v).unwrap_or(100),
             ("Service", "RemainAfterExit") => u.remain_after_exit = truthy(v),
             ("Service", "WorkingDirectory") => u.working_dir = v.into(),
+            ("Service", "User") => u.user = v.into(),
+            ("Service", "Group") => u.group = v.into(),
+            ("Timer", "OnBootSec") | ("Timer", "OnStartupSec") => u.on_boot_ms = parse_duration_ms(v),
+            ("Timer", "OnActiveSec") => u.on_active_ms = parse_duration_ms(v),
+            ("Timer", "OnUnitActiveSec") | ("Timer", "OnUnitInactiveSec") => u.on_unit_active_ms = parse_duration_ms(v),
+            ("Timer", "OnCalendar") => u.calendar.push(v.into()),
+            ("Timer", "Unit") => u.trigger = normalize_name(v),
             ("Service", "Environment") => u.env.extend(split_words(v).into_iter().filter(|w| w.contains('='))),
             _ => {}
         }
@@ -207,7 +227,7 @@ pub fn all_unit_names() -> Vec<String> {
         .iter()
         .filter_map(|d| fs::read_dir(d).ok())
         .flat_map(|rd| rd.flatten().map(|e| e.file_name().to_string_lossy().into_owned()))
-        .filter(|n| n.ends_with(".service") || n.ends_with(".target"))
+        .filter(|n| n.ends_with(".service") || n.ends_with(".target") || n.ends_with(".timer"))
         .collect();
     v.sort();
     v.dedup();

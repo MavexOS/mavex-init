@@ -47,6 +47,8 @@ struct Svc {
     killed9: bool,
     starts: Vec<u64>,
     published: String,
+    next_elapse: Option<u64>,
+    last_trigger: u64,
 }
 
 enum Phase {
@@ -69,11 +71,13 @@ pub struct Init {
     jobs: Vec<Job>,
     j: Writer,
     started: u32,
+    boot_ms: u64,
 }
 
 const DEFAULT_UNITS: &[(&str, &str)] = &[
     ("basic.target", include_str!("../units/basic.target")),
     ("multi-user.target", include_str!("../units/multi-user.target")),
+    ("timers.target", include_str!("../units/timers.target")),
     ("mavex-heartbeat.service", include_str!("../units/mavex-heartbeat.service")),
 ];
 
@@ -137,6 +141,8 @@ fn new_svc(unit: Unit) -> Svc {
         killed9: false,
         starts: Vec::new(),
         published: String::new(),
+        next_elapse: None,
+        last_trigger: 0,
     }
 }
 
@@ -152,7 +158,7 @@ impl Init {
     pub fn new() -> Init {
         ensure_dirs();
         install_defaults();
-        Init { svcs: BTreeMap::new(), pending: Vec::new(), jobs: Vec::new(), j: Writer::open(), started: 0 }
+        Init { svcs: BTreeMap::new(), pending: Vec::new(), jobs: Vec::new(), j: Writer::open(), started: 0, boot_ms: util::now_ms() }
     }
 
     fn log(&mut self, prio: u8, unit: &str, pid: u32, msg: &str) {
@@ -270,6 +276,27 @@ impl Init {
         s.killed9 = false;
         s.rd = None;
         s.buf.clear();
+        if s.unit.is_timer() {
+            s.act = Act::Active;
+            s.sub = "waiting";
+            s.since = now;
+            s.next_elapse = None;
+            let u = s.unit.clone();
+            let mut t: Option<u64> = None;
+            let mut upd = |c: Option<u64>| { if let Some(c) = c { t = Some(t.map_or(c, |o| o.min(c))); } };
+            upd(u.on_boot_ms.map(|v| (self.boot_ms + v).max(now)));
+            upd(u.on_active_ms.map(|v| now + v));
+            upd(u.on_unit_active_ms.map(|v| now + v));
+            for c in &u.calendar {
+                upd(crate::calendar::parse(c).and_then(|c| crate::calendar::next(&c, now)));
+            }
+            let s = self.svcs.get_mut(name).unwrap();
+            s.next_elapse = t;
+            self.started += 1;
+            let d = self.desc(name);
+            self.log(6, "mavex-init", 1, &format!("Started {d}."));
+            return;
+        }
         if s.unit.is_target() || !s.unit.is_service() {
             s.act = Act::Active;
             s.sub = "active";
@@ -292,9 +319,32 @@ impl Init {
         let mut env: Vec<String> = BASE_ENV.iter().map(|e| e.to_string()).collect();
         env.extend(s.unit.env.clone());
         let cwd = if s.unit.working_dir.is_empty() { "/".to_string() } else { s.unit.working_dir.clone() };
+        let user = s.unit.user.clone();
+        let group = s.unit.group.clone();
+        let mut ids = (0u32, 0u32);
+        if !user.is_empty() {
+            match crate::util::lookup_user(&user, &group) {
+                Some((uid, gid, home)) => {
+                    ids = (uid, gid);
+                    env.retain(|e| !e.starts_with("HOME=") || s.unit.env.contains(e));
+                    for (k, v) in [("HOME", home), ("USER", user.clone()), ("LOGNAME", user.clone())] {
+                        if !env.iter().any(|e| e.starts_with(&format!("{k}="))) { env.push(format!("{k}={v}")); }
+                    }
+                }
+                None => {
+                    s.act = Act::Failed;
+                    s.sub = "failed";
+                    s.result = "exit-code".into();
+                    s.code = 217;
+                    self.log(3, name, 0, &format!("Failed to determine user credentials: No such user or group ({user}/{group})"));
+                    self.log(3, "mavex-init", 1, &format!("{name}: Failed with result 'exit-code'."));
+                    return;
+                }
+            }
+        }
         let spawned = sys::pipe_new().map_err(|e| e).and_then(|(r, w)| {
             let fd = w.as_raw_fd();
-            let res = sys::spawn_proc(&argv[0], &argv, &env, &cwd, [-2, fd, fd]);
+            let res = if user.is_empty() { sys::spawn_proc(&argv[0], &argv, &env, &cwd, [-2, fd, fd]) } else { sys::spawn_proc_as(&argv[0], &argv, &env, &cwd, [-2, fd, fd], ids.0, ids.1) };
             drop(w);
             res.map(|pid| (pid, r))
         });
@@ -470,6 +520,15 @@ impl Init {
             self.ilog("Reloading unit files.");
             return self.reply(id, "ok");
         }
+        if let Some(kind) = ["poweroff", "reboot", "halt"].iter().find(|k| **k == op) {
+            let running: Vec<String> = self.svcs.iter().filter(|(_, s)| !matches!(s.act, Act::Inactive | Act::Failed)).map(|(n, _)| n.clone()).collect();
+            self.ilog(match *kind { "reboot" => "System is rebooting.", "halt" => "System is halting.", _ => "System is powering down." });
+            for n in &running {
+                self.stop_unit(n);
+            }
+            self.jobs.push(Job { id: id.into(), op: kind.to_string(), names: running.clone(), txn: running, phase: Phase::Stopping });
+            return;
+        }
         for n in &names {
             match self.get(n) {
                 None => return self.reply(id, &format!("error: Unit {n} not found.")),
@@ -512,7 +571,12 @@ impl Init {
                     if !all_stopped {
                         continue;
                     }
-                    if job.op == "stop" {
+                    if let Some(kind) = ["poweroff", "reboot", "halt"].iter().position(|k| *k == job.op) {
+                        self.ilog("All services stopped; handing control to the host.");
+                        self.reply(&job.id, "ok");
+                        sys::power(kind as i32);
+                        job.phase = Phase::Done;
+                    } else if job.op == "stop" {
                         self.reply(&job.id, "ok");
                         job.phase = Phase::Done;
                     } else {
@@ -548,7 +612,7 @@ impl Init {
 
     fn publish(&mut self) {
         for (name, s) in self.svcs.iter_mut() {
-            let st = State { active: s.act.word().into(), sub: s.sub.into(), pid: s.pid.unwrap_or(0), since_ms: s.since, result: s.result.clone(), restarts: s.restarts, code: s.code };
+            let st = State { active: s.act.word().into(), sub: s.sub.into(), pid: s.pid.unwrap_or(0), since_ms: s.since, result: s.result.clone(), restarts: s.restarts, code: s.code, next_ms: s.next_elapse.unwrap_or(0), last_ms: s.last_trigger };
             let text = st.serialize();
             if text != s.published {
                 if fs::write(format!("{RUN}/units/{name}"), &text).is_ok() {
@@ -597,6 +661,10 @@ impl Init {
                     }
                 }
             }
+            let fire: Vec<String> = self.svcs.iter().filter(|(_, s)| s.unit.is_timer() && s.act == Act::Active && s.next_elapse.is_some_and(|t| t <= now)).map(|(n, _)| n.clone()).collect();
+            for n in fire {
+                self.fire_timer(&n, now);
+            }
             self.advance_jobs();
             self.publish();
             let mut fds = Vec::new();
@@ -609,6 +677,9 @@ impl Init {
             }
             let mut timeout = 100u64;
             for s in self.svcs.values() {
+                if let Some(t) = s.next_elapse.filter(|_| s.act == Act::Active) {
+                    timeout = timeout.min(t.saturating_sub(now).max(5));
+                }
                 if let Some(t) = s.restart_at {
                     timeout = timeout.min(t.saturating_sub(now).max(5));
                 }
@@ -616,6 +687,36 @@ impl Init {
             for i in sys::poll_read(&fds, timeout) {
                 self.read_output(&owners[i]);
             }
+        }
+    }
+
+    fn fire_timer(&mut self, name: &str, now: u64) {
+        let Some(s) = self.svcs.get_mut(name) else { return };
+        let u = s.unit.clone();
+        s.last_trigger = now;
+        let mut next: Option<u64> = None;
+        for c in &u.calendar {
+            if let Some(n) = crate::calendar::parse(c).and_then(|c| crate::calendar::next(&c, now)) {
+                next = Some(next.map_or(n, |o| o.min(n)));
+            }
+        }
+        if let Some(v) = u.on_unit_active_ms {
+            next = Some(next.map_or(now + v, |o| o.min(now + v)));
+        }
+        s.next_elapse = next;
+        if next.is_none() {
+            s.sub = "elapsed";
+        }
+        let target = u.trigger_unit();
+        let d = self.desc(&target);
+        self.log(6, "mavex-init", 1, &format!("{name}: Triggering {d}."));
+        if self.svcs.get(&target).is_none() && self.get(&target).is_none() {
+            self.log(3, name, 0, &format!("Unit {target} not found."));
+            return;
+        }
+        let active = self.svcs.get(&target).is_some_and(|s| matches!(s.act, Act::Active | Act::Activating | Act::Deactivating));
+        if !active {
+            self.enqueue_start(std::slice::from_ref(&target));
         }
     }
 

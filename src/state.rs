@@ -12,13 +12,15 @@ pub struct State {
     pub result: String,
     pub restarts: u32,
     pub code: i32,
+    pub next_ms: u64,
+    pub last_ms: u64,
 }
 
 impl State {
     pub fn serialize(&self) -> String {
         format!(
-            "ActiveState={}\nSubState={}\nMainPID={}\nActiveEnterTimestamp={}\nResult={}\nNRestarts={}\nExecMainStatus={}\n",
-            self.active, self.sub, self.pid, self.since_ms, self.result, self.restarts, self.code
+            "ActiveState={}\nSubState={}\nMainPID={}\nActiveEnterTimestamp={}\nResult={}\nNRestarts={}\nExecMainStatus={}\nNextElapse={}\nLastTrigger={}\n",
+            self.active, self.sub, self.pid, self.since_ms, self.result, self.restarts, self.code, self.next_ms, self.last_ms
         )
     }
 
@@ -34,6 +36,8 @@ impl State {
                 "Result" => s.result = v.into(),
                 "NRestarts" => s.restarts = v.parse().unwrap_or(0),
                 "ExecMainStatus" => s.code = v.parse().unwrap_or(0),
+                "NextElapse" => s.next_ms = v.parse().unwrap_or(0),
+                "LastTrigger" => s.last_ms = v.parse().unwrap_or(0),
                 _ => {}
             }
         }
@@ -56,7 +60,7 @@ mod tests {
     use super::*;
     #[test]
     fn roundtrip() {
-        let s = State { active: "active".into(), sub: "running".into(), pid: 7, since_ms: 5, result: "success".into(), restarts: 2, code: 0 };
+        let s = State { active: "active".into(), sub: "running".into(), pid: 7, since_ms: 5, result: "success".into(), restarts: 2, code: 0, next_ms: 9, last_ms: 3 };
         assert_eq!(State::parse(&s.serialize()), s);
     }
 }

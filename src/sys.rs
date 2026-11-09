@@ -7,6 +7,8 @@ mod imp {
     unsafe extern "C" {
         pub fn pipe(out: *mut u32) -> i32;
         pub fn spawn(prog: *const u8, prog_n: usize, argv: *const u8, argv_n: usize, env: *const u8, env_n: usize, cwd: *const u8, cwd_n: usize, s0: i32, s1: i32, s2: i32) -> i32;
+        pub fn spawn_as(prog: *const u8, prog_n: usize, argv: *const u8, argv_n: usize, env: *const u8, env_n: usize, cwd: *const u8, cwd_n: usize, s0: i32, s1: i32, s2: i32, uid: u32, gid: u32) -> i32;
+        pub fn power(kind: i32) -> i32;
         pub fn poll_child(pid: u32) -> i32;
         pub fn kill(pid: u32, sig: i32) -> i32;
         pub fn getcreds(out: *mut u32) -> i32;
@@ -21,6 +23,8 @@ mod imp {
 mod imp {
     pub unsafe fn pipe(_: *mut u32) -> i32 { -1 }
     pub unsafe fn spawn(_: *const u8, _: usize, _: *const u8, _: usize, _: *const u8, _: usize, _: *const u8, _: usize, _: i32, _: i32, _: i32) -> i32 { -1 }
+    pub unsafe fn spawn_as(_: *const u8, _: usize, _: *const u8, _: usize, _: *const u8, _: usize, _: *const u8, _: usize, _: i32, _: i32, _: i32, _: u32, _: u32) -> i32 { -1 }
+    pub unsafe fn power(_: i32) -> i32 { -1 }
     pub unsafe fn poll_child(_: u32) -> i32 { -1 }
     pub unsafe fn kill(_: u32, _: i32) -> i32 { -1 }
     pub unsafe fn getcreds(_: *mut u32) -> i32 { -1 }
@@ -50,6 +54,17 @@ pub fn spawn_proc(prog: &str, argv: &[String], env: &[String], cwd: &str, stdio:
     let (a, e) = (join(argv), join(env));
     let r = unsafe { imp::spawn(prog.as_ptr(), prog.len(), a.as_ptr(), a.len(), e.as_ptr(), e.len(), cwd.as_ptr(), cwd.len(), stdio[0], stdio[1], stdio[2]) };
     if r < 0 { Err(r) } else { Ok(r as u32) }
+}
+
+pub fn spawn_proc_as(prog: &str, argv: &[String], env: &[String], cwd: &str, stdio: [i32; 3], uid: u32, gid: u32) -> Result<u32, i32> {
+    let (a, e) = (join(argv), join(env));
+    let r = unsafe { imp::spawn_as(prog.as_ptr(), prog.len(), a.as_ptr(), a.len(), e.as_ptr(), e.len(), cwd.as_ptr(), cwd.len(), stdio[0], stdio[1], stdio[2], uid, gid) };
+    if r < 0 { Err(r) } else { Ok(r as u32) }
+}
+
+/// Asks the host to power off (0), reboot (1) or halt (2) the machine.
+pub fn power(kind: i32) {
+    unsafe { imp::power(kind) };
 }
 
 /// Reaps the child if it has exited and returns its exit code.

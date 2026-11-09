@@ -54,6 +54,11 @@ fn status(name: &str) -> i32 {
     if st.restarts > 0 {
         println!("   Restarts: {}", st.restarts);
     }
+    if u.is_timer() {
+        let now = util::now_ms();
+        if st.next_ms > 0 { println!("    Trigger: {}; {} left", util::full(st.next_ms), util::ago(st.next_ms.saturating_sub(now))); }
+        println!("   Triggers: {}", u.trigger_unit());
+    }
     if st.pid > 0 {
         println!("   Main PID: {}", st.pid);
     }
@@ -154,6 +159,52 @@ fn mask(names: &[String], on: bool) -> i32 {
     0
 }
 
+fn list_timers() {
+    println!("{:<26} {:<12} {:<26} {:<12} {:<22} ACTIVATES", "NEXT", "LEFT", "LAST", "PASSED", "UNIT");
+    let now = util::now_ms();
+    let mut n = 0;
+    for name in state::loaded_units().into_iter().filter(|n| n.ends_with(".timer")) {
+        let st = state::read(&name).unwrap_or_default();
+        if st.active != "active" {
+            continue;
+        }
+        let u = unit::load(&name).unwrap_or_default();
+        let (next, left) = if st.next_ms > 0 { (util::full(st.next_ms), util::ago(st.next_ms.saturating_sub(now))) } else { ("-".into(), "-".into()) };
+        let (last, passed) = if st.last_ms > 0 { (util::full(st.last_ms), format!("{} ago", util::ago(now.saturating_sub(st.last_ms)))) } else { ("-".into(), "-".into()) };
+        println!("{next:<26} {left:<12} {last:<26} {passed:<12} {name:<22} {}", u.trigger_unit());
+        n += 1;
+    }
+    println!("\n{n} timers listed.");
+}
+
+/// reboot / poweroff / halt / shutdown: stops every service, then asks the host to power off or reload.
+pub fn power_main(name: &str, args: &[String]) -> i32 {
+    let mut op = match name { "reboot" => "reboot", "halt" => "halt", _ => "poweroff" };
+    for a in args {
+        match a.as_str() {
+            "-r" | "--reboot" => op = "reboot",
+            "-h" | "-P" | "--poweroff" => op = "poweroff",
+            "-H" | "--halt" => op = "halt",
+            "-c" => { println!("shutdown: nothing is scheduled"); return 0; }
+            "--help" => { println!("{name} [-r|-h|-P|-H] [now]\nStops all services and powers the machine off (or reloads it for reboot)."); return 0; }
+            a if name == "shutdown" && !a.starts_with('-') && !matches!(a, "now" | "+0" | "0") && a.parse::<f64>().is_err() && !a.starts_with('+') => {}
+            a if name == "shutdown" && !a.starts_with('-') && !matches!(a, "now" | "+0" | "0") && (a.starts_with('+') || a.parse::<f64>().is_ok()) => {
+                eprintln!("shutdown: only 'now' is supported (no delayed shutdown yet)");
+                return 1;
+            }
+            _ => {}
+        }
+    }
+    if crate::sys::creds().2 != 0 {
+        eprintln!("Failed to {op} system via mavex-init: Access denied (try sudo).");
+        return 1;
+    }
+    match request(op, &[]) {
+        Ok(()) => 0,
+        Err(e) => { eprintln!("{e}"); 1 }
+    }
+}
+
 pub fn main(args: &[String]) -> i32 {
     let mut flags = Vec::new();
     let mut pos = Vec::new();
@@ -165,7 +216,7 @@ pub fn main(args: &[String]) -> i32 {
         return 0;
     }
     if flags.contains(&"--help") || flags.contains(&"-h") {
-        println!("systemctl [COMMAND] [UNIT...]\n\nCommands: list-units, list-unit-files, status, start, stop, restart, try-restart,\n  is-active, is-enabled, is-failed, enable, disable, mask, unmask, cat, show,\n  daemon-reload, get-default, reboot, poweroff\n\nOptions: -a/--all  --no-pager  --now  -q/--quiet");
+        println!("systemctl [COMMAND] [UNIT...]\n\nCommands: list-units, list-timers, list-unit-files, status, start, stop, restart, try-restart,\n  is-active, is-enabled, is-failed, enable, disable, mask, unmask, cat, show,\n  daemon-reload, get-default, reboot, poweroff\n\nOptions: -a/--all  --no-pager  --now  -q/--quiet");
         return 0;
     }
     let all = flags.iter().any(|f| *f == "-a" || *f == "--all");
@@ -243,7 +294,8 @@ pub fn main(args: &[String]) -> i32 {
             println!("{}", fs::read_link("/etc/systemd/system/default.target").ok().and_then(|p| p.file_name().map(|n| n.to_string_lossy().into_owned())).unwrap_or_else(|| "multi-user.target".into()));
             0
         }
-        "reboot" | "poweroff" | "halt" => { eprintln!("{cmd}: not supported yet (close the tab / reload the page)."); 1 }
+        "reboot" | "poweroff" | "halt" => power_main(&cmd, &[]),
+        "list-timers" => { list_timers(); 0 }
         other => { eprintln!("Unknown command verb '{other}'."); 1 }
     }
 }
