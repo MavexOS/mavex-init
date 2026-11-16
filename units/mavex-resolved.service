@@ -1,0 +1,12 @@
+[Unit]
+Description=MavexOS local DNS resolver (127.0.0.1:53, forwards over DNS-over-HTTPS)
+After=basic.target
+
+[Service]
+Type=simple
+ExecStart=/bin/mavex-resolved
+Restart=on-failure
+RestartSec=2s
+
+[Install]
+WantedBy=multi-user.target

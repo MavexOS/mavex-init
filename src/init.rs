@@ -79,7 +79,12 @@ const DEFAULT_UNITS: &[(&str, &str)] = &[
     ("multi-user.target", include_str!("../units/multi-user.target")),
     ("timers.target", include_str!("../units/timers.target")),
     ("mavex-heartbeat.service", include_str!("../units/mavex-heartbeat.service")),
+    ("mavex-resolved.service", include_str!("../units/mavex-resolved.service")),
 ];
+
+/// Units enabled by default. Each is enabled once (a marker records it), so a unit added in a later
+/// release also reaches existing installs, and a unit the user disabled stays disabled.
+const PRESET_ENABLED: &[&str] = &["mavex-heartbeat.service", "mavex-resolved.service"];
 
 const BASE_ENV: &[&str] = &["PATH=/bin", "HOME=/root", "LANG=en_US.UTF-8", "TERM=dumb"];
 
@@ -110,9 +115,19 @@ fn install_defaults() {
         let _ = util::symlink("/usr/lib/systemd/system/multi-user.target", default);
     }
     let wants = "/etc/systemd/system/multi-user.target.wants";
-    if fs::symlink_metadata(wants).is_err() {
-        let _ = util::mkdir_p(wants);
-        let _ = util::symlink("/usr/lib/systemd/system/mavex-heartbeat.service", &format!("{wants}/mavex-heartbeat.service"));
+    let fresh = fs::symlink_metadata(wants).is_err();
+    let _ = util::mkdir_p(wants);
+    let _ = util::mkdir_p("/var/lib/mavex-init/preset");
+    for name in PRESET_ENABLED {
+        let marker = format!("/var/lib/mavex-init/preset/{name}");
+        if fs::symlink_metadata(&marker).is_ok() {
+            continue;
+        }
+        // Installs from before markers existed already made their choice about the heartbeat.
+        if fresh || *name != "mavex-heartbeat.service" {
+            let _ = util::symlink(&format!("/usr/lib/systemd/system/{name}"), &format!("{wants}/{name}"));
+        }
+        let _ = fs::write(&marker, "");
     }
 }
 
